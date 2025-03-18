@@ -49,6 +49,8 @@ int iCurrentResY;
 std::uint8_t* pHUDObject = nullptr;
 int iHUDObjectX;
 int iHUDObjectY;
+const float fHUDFOV = (1.00f / tanf(0.7853981853f / 2.00f));
+bool bHUDNeedsResize = true;
 
 void CalculateAspectRatio(bool bLog)
 {
@@ -171,28 +173,31 @@ void Configuration()
 
 void CurrentResolution()
 {
-   // Current resolution
-   std::uint8_t* CurrentResolutionScanResult = Memory::PatternScan(exeModule, "41 ?? ?? 8B ?? 48 8B ?? FF 90 ?? ?? ?? ?? 84 ?? 0F 84 ?? ?? ?? ?? 44 8B ??");
-   if (CurrentResolutionScanResult) {
-       spdlog::info("Current Resolution: Address is {:s}+{:x}", sExeName.c_str(), CurrentResolutionScanResult - (std::uint8_t*)exeModule);
-       static SafetyHookMid CurrentResolutionMidHook{};
-       CurrentResolutionMidHook = safetyhook::create_mid(CurrentResolutionScanResult,
-           [](SafetyHookContext& ctx) {
-               // Get current resolution
-               int iResX = (int)ctx.rdx;
-               int iResY = (int)ctx.r8;
+    // Current resolution
+    std::uint8_t* CurrentResolutionScanResult = Memory::PatternScan(exeModule, "41 ?? ?? 8B ?? 48 8B ?? FF 90 ?? ?? ?? ?? 84 ?? 0F 84 ?? ?? ?? ?? 44 8B ??");
+    if (CurrentResolutionScanResult) {
+        spdlog::info("Current Resolution: Address is {:s}+{:x}", sExeName.c_str(), CurrentResolutionScanResult - (std::uint8_t*)exeModule);
+        static SafetyHookMid CurrentResolutionMidHook{};
+        CurrentResolutionMidHook = safetyhook::create_mid(CurrentResolutionScanResult,
+            [](SafetyHookContext& ctx) {
+                // Get current resolution
+                int iResX = (int)ctx.rdx;
+                int iResY = (int)ctx.r8;
 
-               // Log resolution
-               if (iResX != iCurrentResX || iResY != iCurrentResY) {
-                   iCurrentResX = iResX;
-                   iCurrentResY = iResY;
-                   CalculateAspectRatio(true);
-               }
-           });
-   }
-   else {
-       spdlog::error("Current Resolution: Pattern scan failed.");
-   }
+                if (iResX != iCurrentResX || iResY != iCurrentResY) {
+                    // Log resolution
+                    iCurrentResX = iResX;
+                    iCurrentResY = iResY;
+                    CalculateAspectRatio(true);
+                    
+                    // Trigger HUD resize
+                    bHUDNeedsResize = true;
+                }
+            });
+    }
+    else {
+        spdlog::error("Current Resolution: Pattern scan failed.");
+    }
 }
 
 void Resolution()
@@ -216,6 +221,7 @@ void Resolution()
             // Overwrite 3840x2160
             Memory::Write(ResolutionListScanResult + 0x38, iCustomResX);
             Memory::Write(ResolutionListScanResult + 0x3C, iCustomResY);
+            spdlog::info("Resolution List: Replaced 3840x2160 with {}x{}.", iCustomResX, iCustomResY);
         }
         else {
             spdlog::error("Resolution List: Pattern scan failed.");
@@ -260,15 +266,50 @@ void Resolution()
 void HUD()
 {
     if (bFixHUD) 
-    {
+    {             
         // HUD Size
-        std::uint8_t* HUDSizeScanResult = Memory::PatternScan(exeModule, "C7 ?? ?? ?? 80 07 00 00 C7 44 ?? ?? 38 04 00 00 48 89 ?? ?? ?? ?? ?? 49 8B ?? ?? ?? ?? ?? 48 85 ?? 74 ??");
+        std::uint8_t* HUDSizeScanResult = Memory::PatternScan(exeModule, "4C ?? ?? ?? ?? ?? ?? 49 ?? ?? ?? ?? ?? ?? 4B ?? ?? ?? 83 ?? ?? 72 ?? 49 ?? ??");
         if (HUDSizeScanResult) {
             spdlog::info("HUD: Size: Address is {:s}+{:x}", sExeName.c_str(), HUDSizeScanResult - (std::uint8_t*)exeModule);
-            if (fAspectRatio > fNativeAspect)
-                Memory::Write(HUDSizeScanResult + 0x4, (int)ceilf(1080.00f * ((float)iCustomResX / iCustomResY)));
-            else if (fAspectRatio < fNativeAspect)
-                Memory::Write(HUDSizeScanResult + 0xC, (int)ceilf(1920.00f / ((float)iCustomResX / iCustomResY)));
+            static SafetyHookMid HUDSizeMidHook{};
+            HUDSizeMidHook = safetyhook::create_mid(HUDSizeScanResult,
+                [](SafetyHookContext& ctx) {
+                    if (ctx.r9 && bHUDNeedsResize) {
+                        if (fAspectRatio == fNativeAspect) {
+                            *reinterpret_cast<float*>(ctx.r9 + 0x4A0) = fHUDFOV / fNativeAspect;
+                            *reinterpret_cast<float*>(ctx.r9 + 0x4B4) = fHUDFOV;
+
+                            *reinterpret_cast<int*>(ctx.r9 + 0x690) = 1920;
+                            *reinterpret_cast<int*>(ctx.r9 + 0x694) = 1080;
+
+                            *reinterpret_cast<float*>(ctx.r9 + 0x7B0) = 2.00f / 1920.00f;
+                            *reinterpret_cast<float*>(ctx.r9 + 0x7C4) = 2.00f / 1080.00f;
+                        }
+                        else if (fAspectRatio > fNativeAspect) {
+                            *reinterpret_cast<float*>(ctx.r9 + 0x4A0) = fHUDFOV / fAspectRatio;
+                            *reinterpret_cast<float*>(ctx.r9 + 0x4B4) = fHUDFOV;
+
+                            *reinterpret_cast<int*>(ctx.r9 + 0x690) = static_cast<int>(std::ceilf(1080.00f * fAspectRatio));
+                            *reinterpret_cast<int*>(ctx.r9 + 0x694) = 1080;
+
+                            *reinterpret_cast<float*>(ctx.r9 + 0x7B0) = 2.00f / (1080.00f * fAspectRatio);
+                            *reinterpret_cast<float*>(ctx.r9 + 0x7C4) = 2.00f / 1080.00f;
+                        }
+                        else if (fAspectRatio < fNativeAspect) {
+                            *reinterpret_cast<float*>(ctx.r9 + 0x4A0) = fHUDFOV / fNativeAspect;
+                            *reinterpret_cast<float*>(ctx.r9 + 0x4B4) = fHUDFOV / fAspectRatio;
+
+                            *reinterpret_cast<int*>(ctx.r9 + 0x690) = 1920;
+                            *reinterpret_cast<int*>(ctx.r9 + 0x694) = static_cast<int>(std::ceilf(1920.00f / fAspectRatio));
+
+                            *reinterpret_cast<float*>(ctx.r9 + 0x7B0) = 2.00f / 1920.00f;
+                            *reinterpret_cast<float*>(ctx.r9 + 0x7C4) = 2.00f / (1920.00f / fAspectRatio);
+                        }
+
+                        // HUD resize is over
+                        bHUDNeedsResize = false;                      
+                    }
+                });
         }
         else {
             spdlog::error("HUD: Size: Pattern scan failed.");
@@ -287,12 +328,12 @@ void HUD()
                         iHUDObjectY = *reinterpret_cast<short*>(pHUDObject + 0xF2);
 
                         // Backgrounds
-                        if (iHUDObjectX >= 1922 && iHUDObjectY >= 1080) {
+                        if ((iHUDObjectX > 1921 && iHUDObjectY > 1081) || (iHUDObjectX > 1999 && iHUDObjectY > 1079)) {
                             if (fAspectRatio > fNativeAspect)
                                 ctx.rax = (static_cast<uintptr_t>(iHUDObjectY) << 16) | static_cast<short>(ceilf(iHUDObjectX * fAspectMultiplier));
                             else if (fAspectRatio < fNativeAspect)
                                 ctx.rax = (static_cast<uintptr_t>(static_cast<short>(ceilf(iHUDObjectX / fAspectRatio))) << 16) | iHUDObjectX;
-                        }  
+                        }
                     }
                 });
         }
@@ -300,24 +341,16 @@ void HUD()
             spdlog::error("HUD Objects: Pattern scan failed.");
         }
 
-        /*
-        // Fix cursor position in tab menu
-        std::uint8_t* MenuCursorScanResult = Memory::PatternScan(exeModule, "F3 0F ?? ?? F3 0F ?? ?? F3 41 ?? ?? ?? 4C 8B ?? ?? ?? 4C 8B ?? ?? ?? ");
-        if (MenuCursorScanResult) {
-            spdlog::info("HUD: Cursor Position: Address is {:s}+{:x}", sExeName.c_str(), MenuCursorScanResult - (std::uint8_t*)exeModule);
-            static SafetyHookMid MenuCursorHorMidHook{};
-            MenuCursorHorMidHook = safetyhook::create_mid(MenuCursorScanResult,
-            [](SafetyHookContext& ctx) {
-                if (fAspectRatio > fNativeAspect) {
-                    ctx.xmm0.f32[0] = static_cast<float>(iCurrentResX);
-                    ctx.xmm6.f32[0] += fHUDWidthOffset;
-                }
-            });
+        // Fix culling of in-world markers
+        std::uint8_t* MarkersCullingScanResult = Memory::PatternScan(exeModule, "72 ?? 0F ?? ?? 72 ?? 48 8D ?? ?? ?? E8 ?? ?? ?? ?? 0F ?? ?? ?? ?? ?? ?? 72 ?? 0F ?? ?? 72 ?? B0 01");
+        if (MarkersCullingScanResult) {
+            spdlog::info("HUD: Markers: Address is {:s}+{:x}", sExeName.c_str(), MarkersCullingScanResult - (std::uint8_t*)exeModule);
+            Memory::PatchBytes(MarkersCullingScanResult, "\xEB\x1D", 2); // just don't cull any of them
+            spdlog::info("HUD: Markers: Patched instruction.");
         }
         else {
-            spdlog::error("HUD: Cursor Position: Pattern scan failed.");
+            spdlog::error("HUD: Markers: Pattern scan failed.");
         }
-        */
     }
 }
 
