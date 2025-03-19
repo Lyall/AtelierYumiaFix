@@ -30,7 +30,7 @@ std::string sExeName;
 std::pair DesktopDimensions = { 0,0 };
 const float fPi = 3.1415926535f;
 const float fNativeAspect = 16.00f / 9.00f;
-float fAspectRatio;
+float fAspectRatio = fNativeAspect;
 float fAspectMultiplier;
 float fHUDWidth;
 float fHUDWidthOffset;
@@ -238,29 +238,24 @@ void Resolution()
                 [](SafetyHookContext& ctx) {
                     // This is pretty inefficient but ¯\_(ツ)_/¯
                     if (!bStringIdentified && ctx.rax) {
-                    const std::string oldRes = "3840x2160";
-                    std::string newRes = std::to_string(iCustomResX) + "x" + std::to_string(iCustomResY);
+                        const std::string oldRes = "3840x2160";
+                        std::string newRes = std::to_string(iCustomResX) + "x" + std::to_string(iCustomResY);
 
-                    char* currentString = (char*)ctx.rax;
-                    if (strncmp(currentString, oldRes.c_str(), oldRes.size()) == 0) {
-                        if (newRes.size() <= oldRes.size()) {
-                            std::memcpy(currentString, newRes.c_str(), newRes.size() + 1);
-                            spdlog::info("Resolution String: Replaced 3840x2160 with {}", newRes);
+                        char* currentString = (char*)ctx.rax;
+                        if (strncmp(currentString, oldRes.c_str(), oldRes.size()) == 0) {
+                            if (newRes.size() <= oldRes.size()) {
+                                std::memcpy(currentString, newRes.c_str(), newRes.size() + 1);
+                                spdlog::info("Resolution String: Replaced 3840x2160 with {}", newRes);
+                            }
+                            bStringIdentified = true; // Stop string comparisons if we've already seen/modified "3840x2160"
                         }
-                        bStringIdentified = true; // Stop string comparisons if we've already seen/modified "3840x2160"
                     }
-                }
                 });
         }
         else {
             spdlog::error("Resolution String: Pattern scan failed.");
         }
     } 
-
-    // Log custom resolution
-    iCurrentResX = iCustomResX;
-    iCurrentResY = iCustomResY;
-    CalculateAspectRatio(true);
 }
 
 void HUD()
@@ -274,18 +269,8 @@ void HUD()
             static SafetyHookMid HUDSizeMidHook{};
             HUDSizeMidHook = safetyhook::create_mid(HUDSizeScanResult,
                 [](SafetyHookContext& ctx) {
-                    if (ctx.r9 && bHUDNeedsResize) {
-                        if (fAspectRatio == fNativeAspect) {
-                            *reinterpret_cast<float*>(ctx.r9 + 0x4A0) = fHUDFOV / fNativeAspect;
-                            *reinterpret_cast<float*>(ctx.r9 + 0x4B4) = fHUDFOV;
-
-                            *reinterpret_cast<int*>(ctx.r9 + 0x690) = 1920;
-                            *reinterpret_cast<int*>(ctx.r9 + 0x694) = 1080;
-
-                            *reinterpret_cast<float*>(ctx.r9 + 0x7B0) = 2.00f / 1920.00f;
-                            *reinterpret_cast<float*>(ctx.r9 + 0x7C4) = 2.00f / 1080.00f;
-                        }
-                        else if (fAspectRatio > fNativeAspect) {
+                    if (ctx.r9 && bHUDNeedsResize) {                                          
+                        if (fAspectRatio > fNativeAspect) {
                             *reinterpret_cast<float*>(ctx.r9 + 0x4A0) = fHUDFOV / fAspectRatio;
                             *reinterpret_cast<float*>(ctx.r9 + 0x4B4) = fHUDFOV;
 
@@ -305,9 +290,19 @@ void HUD()
                             *reinterpret_cast<float*>(ctx.r9 + 0x7B0) = 2.00f / 1920.00f;
                             *reinterpret_cast<float*>(ctx.r9 + 0x7C4) = 2.00f / (1920.00f / fAspectRatio);
                         }
+                        else { // Defaults
+                            *reinterpret_cast<float*>(ctx.r9 + 0x4A0) = fHUDFOV / fNativeAspect;
+                            *reinterpret_cast<float*>(ctx.r9 + 0x4B4) = fHUDFOV;
+
+                            *reinterpret_cast<int*>(ctx.r9 + 0x690) = 1920;
+                            *reinterpret_cast<int*>(ctx.r9 + 0x694) = 1080;
+
+                            *reinterpret_cast<float*>(ctx.r9 + 0x7B0) = 2.00f / 1920.00f;
+                            *reinterpret_cast<float*>(ctx.r9 + 0x7C4) = 2.00f / 1080.00f;
+                        }
 
                         // HUD resize is over
-                        bHUDNeedsResize = false;                      
+                        bHUDNeedsResize = false; 
                     }
                 });
         }
@@ -328,7 +323,7 @@ void HUD()
                         iHUDObjectY = *reinterpret_cast<short*>(pHUDObject + 0xF2);
 
                         // Backgrounds
-                        if ((iHUDObjectX > 1921 && iHUDObjectY > 1081) || (iHUDObjectX > 1999 && iHUDObjectY > 1079)) {
+                        if ( (iHUDObjectX > 1921 && iHUDObjectY > 1081) || (iHUDObjectX > 1999 && iHUDObjectY > 1079) || (iHUDObjectX == 4000 && iHUDObjectY == 1000) ) {
                             if (fAspectRatio > fNativeAspect)
                                 ctx.rax = (static_cast<uintptr_t>(iHUDObjectY) << 16) | static_cast<short>(ceilf(iHUDObjectX * fAspectMultiplier));
                             else if (fAspectRatio < fNativeAspect)
@@ -345,7 +340,7 @@ void HUD()
         std::uint8_t* MarkersCullingScanResult = Memory::PatternScan(exeModule, "72 ?? 0F ?? ?? 72 ?? 48 8D ?? ?? ?? E8 ?? ?? ?? ?? 0F ?? ?? ?? ?? ?? ?? 72 ?? 0F ?? ?? 72 ?? B0 01");
         if (MarkersCullingScanResult) {
             spdlog::info("HUD: Markers: Address is {:s}+{:x}", sExeName.c_str(), MarkersCullingScanResult - (std::uint8_t*)exeModule);
-            Memory::PatchBytes(MarkersCullingScanResult, "\xEB\x1D", 2); // just don't cull any of them
+            Memory::PatchBytes(MarkersCullingScanResult, "\xEB\x1D", 2); // Don't cull any of them
             spdlog::info("HUD: Markers: Patched instruction.");
         }
         else {
@@ -353,7 +348,6 @@ void HUD()
         }
     }
 }
-
 
 DWORD __stdcall Main(void*)
 {
