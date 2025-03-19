@@ -5,7 +5,7 @@
 
 **AtelierYumiaFix** is an ASI plugin for Atelier Yumia: The Alchemist of Memories & the Envisioned Land that can:
 - Add support for custom resolutions.
-- Fix HUD issues at ultrawide/narrower.
+- Fix HUD issues at ultrawide/narrower resolutions.
 
 ## Installation  
 - Download the latest release from [here](https://github.com/Lyall/AtelierYumiaFix/releases). 
@@ -18,8 +18,14 @@
 ## Configuration
 - Open **`AtelierYumiaFix.ini`** to adjust settings.
 
+## Known Issues
+#### Ultrawide/Narrower
+- When in battle, the small visual effect that appears upon activating a skill is displayed at the wrong aspect ratio.
+- At wider than 21:9 aspect ratios, the crouch vignette does not span the screen fully.
+- At wider than 32:9 aspect ratios, the minimap image is duplicated at the edge of the screen.
+
 ## Screenshots
-|  |
+| ![ezgif-19f656bb6c209b](https://github.com/user-attachments/assets/bafa5269-5a96-4b48-9e6e-a9754973b96d) |
 |:--:|
 | Gameplay |
 
