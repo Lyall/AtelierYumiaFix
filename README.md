@@ -19,7 +19,7 @@
 - Open **`AtelierYumiaFix.ini`** to adjust settings.
 
 ## Known Issues
-#### Ultrawide/Narrower
+**Ultrawide/Narrower**
 - When in battle, the small visual effect that appears upon activating a skill is displayed at the wrong aspect ratio.
 - At wider than 21:9 aspect ratios, the crouch vignette does not span the screen fully.
 - At wider than 32:9 aspect ratios, the minimap image is duplicated at the edge of the screen.
