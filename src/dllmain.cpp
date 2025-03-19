@@ -49,7 +49,7 @@ int iCurrentResY;
 std::uint8_t* pHUDObject = nullptr;
 int iHUDObjectX;
 int iHUDObjectY;
-const float fHUDFOV = (1.00f / tanf(0.7853981853f / 2.00f));
+const float fHUDFOV = (1.00f / std::tanf(0.7853981853f / 2.00f));
 bool bHUDNeedsResize = true;
 
 void CalculateAspectRatio(bool bLog)
@@ -317,23 +317,24 @@ void HUD()
             static SafetyHookMid HUDObjectsMidHook{};
             HUDObjectsMidHook = safetyhook::create_mid(HUDObjectsScanResult,
                 [](SafetyHookContext& ctx) {
-                    if (ctx.r13 + 0x8) {
-                        pHUDObject = *reinterpret_cast<std::uint8_t**>(ctx.r13 + 0x08);
-                        iHUDObjectX = *reinterpret_cast<short*>(pHUDObject + 0xF0);
-                        iHUDObjectY = *reinterpret_cast<short*>(pHUDObject + 0xF2);
+                    if (!ctx.r13)
+                        return;
 
-                        // Backgrounds
-                        if ( (iHUDObjectX > 1921 && iHUDObjectY > 1081) || (iHUDObjectX > 1999 && iHUDObjectY > 1079) || (iHUDObjectX == 4000 && iHUDObjectY == 1000) ) {
-                            if (fAspectRatio > fNativeAspect)
-                                ctx.rax = (static_cast<uintptr_t>(iHUDObjectY) << 16) | static_cast<short>(ceilf(iHUDObjectX * fAspectMultiplier));
-                            else if (fAspectRatio < fNativeAspect)
-                                ctx.rax = (static_cast<uintptr_t>(static_cast<short>(ceilf(iHUDObjectX / fAspectRatio))) << 16) | iHUDObjectX;
-                        }
+                    pHUDObject = *reinterpret_cast<std::uint8_t**>(ctx.r13 + 0x08);
+                    iHUDObjectX = *reinterpret_cast<short*>(pHUDObject + 0xF0);
+                    iHUDObjectY = *reinterpret_cast<short*>(pHUDObject + 0xF2);
+
+                    // Backgrounds
+                    if ( (iHUDObjectX > 1921 && iHUDObjectY > 1081) || (iHUDObjectX > 1999 && iHUDObjectY > 1079) || (iHUDObjectX == 4000 && iHUDObjectY == 1000) ) {
+                        if (fAspectRatio > fNativeAspect)
+                            ctx.rax = (static_cast<uintptr_t>(iHUDObjectY) << 16) | static_cast<short>(ceilf(iHUDObjectX * fAspectMultiplier));
+                        else if (fAspectRatio < fNativeAspect)
+                            ctx.rax = (static_cast<uintptr_t>(static_cast<short>(ceilf(iHUDObjectX / fAspectRatio))) << 16) | iHUDObjectX;
                     }
                 });
         }
         else {
-            spdlog::error("HUD Objects: Pattern scan failed.");
+            spdlog::error("HUD: Objects: Pattern scan failed.");
         }
 
         // Fix culling of in-world markers
@@ -345,6 +346,24 @@ void HUD()
         }
         else {
             spdlog::error("HUD: Markers: Pattern scan failed.");
+        }
+
+        // Fix battle skill selection effect  
+        std::uint8_t* SkillSelectEffectScanResult = Memory::PatternScan(exeModule, "0F BF ?? ?? ?? ?? ?? 66 0F ?? ?? 0F BF ?? ?? ?? ?? ?? 0F 5B ?? 66 0F ?? ?? 0F 5B ?? F3 0F ?? ?? F3 0F ?? ?? ?? ?? ?? ?? 0F 28 ??");
+        if (SkillSelectEffectScanResult) { 
+            spdlog::info("HUD: Skill Select Effect: Address is {:s}+{:x}", sExeName.c_str(), SkillSelectEffectScanResult - (std::uint8_t*)exeModule);
+            static SafetyHookMid SkillSelectEffectMidHook{};
+            SkillSelectEffectMidHook = safetyhook::create_mid(SkillSelectEffectScanResult,
+                [](SafetyHookContext& ctx) {
+                    if (!ctx.rbx)
+                        return;
+                    
+                    if (fAspectRatio != fNativeAspect)
+                        *reinterpret_cast<float*>(ctx.rbx + 0x1E0) = *reinterpret_cast<float*>(ctx.rbx + 0x1F4);
+                });
+        }
+        else {
+            spdlog::error("HUD: Skill Select Effect: Pattern scan failed.");
         }
     }
 }
