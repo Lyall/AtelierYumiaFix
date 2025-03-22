@@ -4,7 +4,9 @@
 [![Github All Releases](https://img.shields.io/github/downloads/Lyall/AtelierYumiaFix/total.svg)](https://github.com/Lyall/AtelierYumiaFix/releases)
 
 **AtelierYumiaFix** is an ASI plugin for Atelier Yumia: The Alchemist of Memories & the Envisioned Land that can:
+- Skip intro logos.
 - Add support for custom resolutions.
+- Adjust gameplay/battle FOV.
 - Fix HUD issues at ultrawide/narrower resolutions.
 
 ## Installation  
