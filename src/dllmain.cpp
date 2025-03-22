@@ -294,6 +294,7 @@ void IntroSkip()
             static SafetyHookMid AutosaveDialogMidHook{};
             AutosaveDialogMidHook = safetyhook::create_mid(AutosaveDialogScanResult,
                 [](SafetyHookContext& ctx) {
+                    // This one causes a glitch in the OOBE for the demo where the autosave dialog remains visual.
                     if (!bHasSkippedIntro) {
                         ctx.rax = (ctx.rax & ~0xFF) | 0x01;
                     }
@@ -310,7 +311,7 @@ void IntroSkip()
                 });
         }
         else {
-            spdlog::error("Intro Skip: Pattern scan failed.");
+            spdlog::error("Intro Skip: Pattern scan(s) failed.");
         }
     }
 }
