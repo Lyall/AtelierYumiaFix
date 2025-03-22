@@ -13,7 +13,7 @@ HMODULE thisModule;
 
 // Fix details
 std::string sFixName = "AtelierYumiaFix";
-std::string sFixVersion = "0.0.2";
+std::string sFixVersion = "0.0.3";
 std::filesystem::path sFixPath;
 
 // Ini
@@ -42,6 +42,9 @@ bool bCustomRes;
 int iCustomResX;
 int iCustomResY;
 bool bFixHUD;
+float fGameplayFOVMulti;
+float fBattleFOVMulti;
+bool bIntroSkip;
 
 // Variables
 int iCurrentResX;
@@ -51,6 +54,7 @@ int iHUDObjectX;
 int iHUDObjectY;
 const float fHUDFOV = (1.00f / std::tanf(0.7853981853f / 2.00f));
 bool bHUDNeedsResize = true;
+bool bHasSkippedIntro;
 
 void CalculateAspectRatio(bool bLog)
 {
@@ -161,12 +165,22 @@ void Configuration()
     inipp::get_value(ini.sections["Custom Resolution"], "Width", iCustomResX);
     inipp::get_value(ini.sections["Custom Resolution"], "Height", iCustomResY);
     inipp::get_value(ini.sections["Fix HUD"], "Enabled", bFixHUD);
+    inipp::get_value(ini.sections["FOV"], "Gameplay", fGameplayFOVMulti);
+    inipp::get_value(ini.sections["FOV"], "Battle", fBattleFOVMulti);
+    inipp::get_value(ini.sections["Intro Skip"], "Enabled", bIntroSkip);
+
+    // Clamp settings
+    fGameplayFOVMulti = std::clamp(fGameplayFOVMulti, 0.10f, 2.00f);
+    fBattleFOVMulti = std::clamp(fBattleFOVMulti, 0.10f, 2.00f);
 
     // Log ini parse
     spdlog_confparse(bCustomRes);
     spdlog_confparse(iCustomResX);
     spdlog_confparse(iCustomResY);
     spdlog_confparse(bFixHUD);
+    spdlog_confparse(fGameplayFOVMulti);
+    spdlog_confparse(fBattleFOVMulti);
+    spdlog_confparse(bIntroSkip);
 
     spdlog::info("----------");
 }
@@ -258,6 +272,87 @@ void Resolution()
     } 
 }
 
+void IntroSkip()
+{
+    if (bIntroSkip)
+    {
+        // Skip logos/autosave dialog/attract movie
+        std::uint8_t* IntroLogosScanResult = Memory::PatternScan(exeModule, "48 ?? ?? 83 ?? 02 76 ?? C6 ?? ?? ?? ?? ?? 01 33 ?? 48 83 ?? ??");
+        std::uint8_t* AutosaveDialogScanResult = Memory::PatternScan(exeModule, "84 ?? 0F 84 ?? ?? ?? ?? 83 ?? ?? ?? ?? ?? 00 74 ?? 83 ?? ?? ?? ?? ?? 00 74 ?? 48 8B ?? ?? ?? ?? ??");
+        std::uint8_t* AttractMovieScanResult = Memory::PatternScan(exeModule, "33 ?? 84 ?? 75 ?? E8 ?? ?? ?? ?? 4C 8D ?? ?? ?? 48 89 ?? ?? ?? 41 ?? ?? ?? ?? ?? 48 89 ?? ?? ??");
+        if (IntroLogosScanResult && AutosaveDialogScanResult && AttractMovieScanResult) {
+            spdlog::info("Intro Skip: Logos: Address is {:s}+{:x}", sExeName.c_str(), IntroLogosScanResult - (std::uint8_t*)exeModule);
+            static SafetyHookMid IntroLogosMidHook{};
+            IntroLogosMidHook = safetyhook::create_mid(IntroLogosScanResult,
+                [](SafetyHookContext& ctx) {
+                    if (!bHasSkippedIntro) {
+                        ctx.rax = (ctx.rax & ~0xFF) | 0x03;
+                    }
+                });
+
+            spdlog::info("Intro Skip: Autosave Dialog: Address is {:s}+{:x}", sExeName.c_str(), AutosaveDialogScanResult - (std::uint8_t*)exeModule);
+            static SafetyHookMid AutosaveDialogMidHook{};
+            AutosaveDialogMidHook = safetyhook::create_mid(AutosaveDialogScanResult,
+                [](SafetyHookContext& ctx) {
+                    if (!bHasSkippedIntro) {
+                        ctx.rax = (ctx.rax & ~0xFF) | 0x01;
+                    }
+                });
+
+            spdlog::info("Intro Skip: Attract Movie: Address is {:s}+{:x}", sExeName.c_str(), AttractMovieScanResult - (std::uint8_t*)exeModule);
+            static SafetyHookMid AttractMovieMidHook{};
+            AttractMovieMidHook = safetyhook::create_mid(AttractMovieScanResult,
+                [](SafetyHookContext& ctx) {
+                    if (!bHasSkippedIntro) {
+                        ctx.rax = (ctx.rax & ~0xFF) | 0x01;
+                        bHasSkippedIntro = true;
+                    }
+                });
+        }
+        else {
+            spdlog::error("Intro Skip: Pattern scan failed.");
+        }
+    }
+}
+
+void FOV()
+{
+    if (fGameplayFOVMulti != 1.00f)
+    {
+        // Gameplay FOV
+        std::uint8_t* GameplayFOVScanResult = Memory::PatternScan(exeModule, "E8 ?? ?? ?? ?? 0F ?? ?? 48 8B ?? FF ?? 48 8B ?? 48 8B ?? ?? 48 8B ?? ?? ?? ?? ?? E8 ?? ?? ?? ??");
+        if (GameplayFOVScanResult) {
+            spdlog::info("FOV: Gameplay: Address is {:s}+{:x}", sExeName.c_str(), GameplayFOVScanResult - (std::uint8_t*)exeModule);
+            static SafetyHookMid GameplayFOVMidHook{};
+            GameplayFOVMidHook = safetyhook::create_mid(GameplayFOVScanResult + 0x5,
+                [](SafetyHookContext& ctx) {
+                    ctx.xmm0.f32[0] *= fGameplayFOVMulti;
+                });
+        }
+        else {
+            spdlog::error("FOV: Gameplay: Pattern scan failed.");
+        }
+    }
+
+    if (fBattleFOVMulti != 1.00f)
+    {
+        // Battle FOV
+        std::uint8_t* BattleFOVScanResult = Memory::PatternScan(exeModule, "48 8B ?? F3 44 ?? ?? ?? ?? ?? F3 44 ?? ?? ?? ?? ?? FF ?? ?? 84 ?? 74 ??");
+        if (BattleFOVScanResult) {
+            spdlog::info("FOV: Battle: Address is {:s}+{:x}", sExeName.c_str(), BattleFOVScanResult - (std::uint8_t*)exeModule);
+            static SafetyHookMid BattleFOVMidHook{};
+            BattleFOVMidHook = safetyhook::create_mid(BattleFOVScanResult,
+                [](SafetyHookContext& ctx) {
+                    ctx.xmm9.f32[0] *= fBattleFOVMulti;
+                });
+        }
+        else {
+            spdlog::error("FOV: Battle: Pattern scan failed.");
+        }
+    }
+   
+}
+
 void HUD()
 {
     if (bFixHUD) 
@@ -347,24 +442,6 @@ void HUD()
         else {
             spdlog::error("HUD: Markers: Pattern scan failed.");
         }
-
-        // Fix battle skill selection effect  
-        std::uint8_t* SkillSelectEffectScanResult = Memory::PatternScan(exeModule, "0F BF ?? ?? ?? ?? ?? 66 0F ?? ?? 0F BF ?? ?? ?? ?? ?? 0F 5B ?? 66 0F ?? ?? 0F 5B ?? F3 0F ?? ?? F3 0F ?? ?? ?? ?? ?? ?? 0F 28 ??");
-        if (SkillSelectEffectScanResult) { 
-            spdlog::info("HUD: Skill Select Effect: Address is {:s}+{:x}", sExeName.c_str(), SkillSelectEffectScanResult - (std::uint8_t*)exeModule);
-            static SafetyHookMid SkillSelectEffectMidHook{};
-            SkillSelectEffectMidHook = safetyhook::create_mid(SkillSelectEffectScanResult,
-                [](SafetyHookContext& ctx) {
-                    if (!ctx.rbx)
-                        return;
-                    
-                    if (fAspectRatio != fNativeAspect)
-                        *reinterpret_cast<float*>(ctx.rbx + 0x1E0) = *reinterpret_cast<float*>(ctx.rbx + 0x1F4);
-                });
-        }
-        else {
-            spdlog::error("HUD: Skill Select Effect: Pattern scan failed.");
-        }
     }
 }
 
@@ -374,6 +451,8 @@ DWORD __stdcall Main(void*)
     Configuration();
     CurrentResolution();
     Resolution();
+    IntroSkip();
+    FOV();
     HUD();
 
     return true;
