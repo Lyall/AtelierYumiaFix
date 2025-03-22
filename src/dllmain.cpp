@@ -13,7 +13,7 @@ HMODULE thisModule;
 
 // Fix details
 std::string sFixName = "AtelierYumiaFix";
-std::string sFixVersion = "0.0.3";
+std::string sFixVersion = "0.0.4";
 std::filesystem::path sFixPath;
 
 // Ini
@@ -241,6 +241,20 @@ void Resolution()
             spdlog::error("Resolution List: Pattern scan failed.");
         } 
 
+        // Resolution check
+        std::uint8_t* ResolutionListCheckScanResult = Memory::PatternScan(exeModule, "7C ?? 8B ?? 48 8B ?? ?? ?? 48 83 ?? ?? ?? C3 41 ?? ?? 48 8B ?? ?? ?? 48 83 ?? ?? ?? C3");
+        std::uint8_t* ResolutionSupportedCheckScanResult = Memory::PatternScan(exeModule, "7D ?? 49 ?? ?? 01 79 ?? 48 8B ?? ?? ?? 48 8B ?? ?? ?? 48 83 ?? ?? ?? C3");
+        if (ResolutionListCheckScanResult && ResolutionSupportedCheckScanResult) {
+            spdlog::info("Resolution Check: List: Address is {:s}+{:x}", sExeName.c_str(), ResolutionListCheckScanResult - (std::uint8_t*)exeModule);
+            Memory::PatchBytes(ResolutionListCheckScanResult, "\x90\x90", 2);
+
+            spdlog::info("Resolution Check: Supported: Address is {:s}+{:x}", sExeName.c_str(), ResolutionSupportedCheckScanResult - (std::uint8_t*)exeModule);
+            Memory::PatchBytes(ResolutionSupportedCheckScanResult, "\x90\x90", 2);
+        }
+        else {
+            spdlog::error("Resolution Check: Pattern scan(s) failed.");
+        }
+
         // Resolution string
         std::uint8_t* ResolutionStringScanResult = Memory::PatternScan(exeModule, "48 85 ?? 74 ?? 48 83 ?? ?? ?? 72 ?? 48 8B ?? 48 83 ?? ?? 5B C3");
         if (ResolutionStringScanResult) {
@@ -406,6 +420,28 @@ void HUD()
             spdlog::error("HUD: Size: Pattern scan failed.");
         }
 
+       
+        // Photo mode blur
+        std::uint8_t* PhotoModeBlurScanResult = Memory::PatternScan(exeModule, "48 89 ?? ?? ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? 48 89 ?? ?? ?? 48 8D ?? ?? ?? ?? ?? ?? 89 ?? ?? ?? ?? ?? ?? 48 8D ?? ?? ?? ?? ?? 48 89 ?? ?? ??");
+        if (PhotoModeBlurScanResult) { 
+            spdlog::info("HUD: Photo Mode Blur: Address is {:s}+{:x}", sExeName.c_str(), PhotoModeBlurScanResult - (std::uint8_t*)exeModule);
+            static SafetyHookMid PhotoModeBlurMidHook{};
+            PhotoModeBlurMidHook = safetyhook::create_mid(PhotoModeBlurScanResult,
+                [](SafetyHookContext& ctx) {
+                    ctx.rcx = (static_cast<uintptr_t>(1080) << 32) | 1920;
+
+                    if (ctx.rbx) {
+                        if (fAspectRatio > fNativeAspect)
+                            *reinterpret_cast<short*>(ctx.rbx + 0xF0) = static_cast<short>(std::ceilf(1080.00f * fAspectRatio));
+                        else if (fAspectRatio < fNativeAspect)
+                            *reinterpret_cast<short*>(ctx.rbx + 0xF2) = static_cast<short>(std::ceilf(1920.00f / fAspectRatio));
+                    }
+                });
+        }
+        else {
+            spdlog::error("HUD: Photo Mode Blur: Pattern scan failed.");
+        }
+
         // HUD Objects
         std::uint8_t* HUDObjectsScanResult = Memory::PatternScan(exeModule, "89 ?? ?? 49 8B ?? ?? 48 8B ?? FF 90 ?? ?? ?? ?? 8B ?? 33 ?? 49 8B ?? ??");
         if (HUDObjectsScanResult) { 
@@ -419,6 +455,31 @@ void HUD()
                     pHUDObject = *reinterpret_cast<std::uint8_t**>(ctx.r13 + 0x08);
                     iHUDObjectX = *reinterpret_cast<short*>(pHUDObject + 0xF0);
                     iHUDObjectY = *reinterpret_cast<short*>(pHUDObject + 0xF2);
+
+                    // Skip already scaled 1920x1080 objects
+                    if (fAspectRatio > fNativeAspect) {
+                        if (iHUDObjectX == static_cast<short>(std::ceilf(1080.00f * fAspectRatio)) && iHUDObjectY == 1080)
+                            return;
+                    }
+                    else if (fAspectRatio < fNativeAspect) {
+                        if (iHUDObjectX == 1920 && iHUDObjectY == static_cast<short>(std::ceilf(1920.00f / fAspectRatio)))
+                            return;
+                    }
+
+                    // Fix photo mode filters
+                    if (iHUDObjectX == 1920 && iHUDObjectY == 1080) {
+                        if (strncmp(reinterpret_cast<const char*>(ctx.r13 + 0x20), "sample", 6) == 0) {
+                            if (fAspectRatio > fNativeAspect) {
+                                *reinterpret_cast<short*>(pHUDObject + 0xF0) = static_cast<short>(std::ceilf(1080.00f * fAspectRatio));
+                                ctx.rax = (static_cast<uintptr_t>(iHUDObjectY) << 16) | static_cast<short>(ceilf(iHUDObjectX * fAspectMultiplier));
+                            }
+                            else if (fAspectRatio < fNativeAspect) {
+                                *reinterpret_cast<short*>(pHUDObject + 0xF2) = static_cast<short>(std::ceilf(1920.00f / fAspectRatio));
+                                ctx.rax = (static_cast<uintptr_t>(static_cast<short>(ceilf(iHUDObjectX / fAspectRatio))) << 16) | iHUDObjectX;
+                            }
+                            return;
+                        }
+                    }
 
                     // Backgrounds
                     if ( (iHUDObjectX > 1921 && iHUDObjectY > 1081) || (iHUDObjectX > 1999 && iHUDObjectY > 1079) || (iHUDObjectX == 4000 && iHUDObjectY == 1000) ) {
