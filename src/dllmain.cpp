@@ -13,7 +13,7 @@ HMODULE thisModule;
 
 // Fix details
 std::string sFixName = "AtelierYumiaFix";
-std::string sFixVersion = "0.0.4";
+std::string sFixVersion = "0.0.5";
 std::filesystem::path sFixPath;
 
 // Ini
@@ -49,7 +49,6 @@ bool bIntroSkip;
 // Variables
 int iCurrentResX;
 int iCurrentResY;
-std::uint8_t* pHUDObject = nullptr;
 int iHUDObjectX;
 int iHUDObjectY;
 const float fHUDFOV = (1.00f / std::tanf(0.7853981853f / 2.00f));
@@ -364,8 +363,7 @@ void FOV()
         else {
             spdlog::error("FOV: Battle: Pattern scan failed.");
         }
-    }
-   
+    } 
 }
 
 void HUD()
@@ -420,7 +418,6 @@ void HUD()
             spdlog::error("HUD: Size: Pattern scan failed.");
         }
 
-       
         // Photo mode blur
         std::uint8_t* PhotoModeBlurScanResult = Memory::PatternScan(exeModule, "48 89 ?? ?? ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? 48 89 ?? ?? ?? 48 8D ?? ?? ?? ?? ?? ?? 89 ?? ?? ?? ?? ?? ?? 48 8D ?? ?? ?? ?? ?? 48 89 ?? ?? ??");
         if (PhotoModeBlurScanResult) { 
@@ -447,46 +444,52 @@ void HUD()
         if (HUDObjectsScanResult) { 
             spdlog::info("HUD: Objects: Address is {:s}+{:x}", sExeName.c_str(), HUDObjectsScanResult - (std::uint8_t*)exeModule);
             static SafetyHookMid HUDObjectsMidHook{};
-            HUDObjectsMidHook = safetyhook::create_mid(HUDObjectsScanResult,
+            HUDObjectsMidHook = safetyhook::create_mid(HUDObjectsScanResult - 0x6,
                 [](SafetyHookContext& ctx) {
-                    if (!ctx.r13)
+                    if (!ctx.rax)
                         return;
 
-                    pHUDObject = *reinterpret_cast<std::uint8_t**>(ctx.r13 + 0x08);
-                    iHUDObjectX = *reinterpret_cast<short*>(pHUDObject + 0xF0);
-                    iHUDObjectY = *reinterpret_cast<short*>(pHUDObject + 0xF2);
+                    // Skip already scaled objects
+                    if (*reinterpret_cast<int*>(ctx.rax + 0xC4) == 12345)
+                        return;
 
-                    // Skip already scaled 1920x1080 objects
-                    if (fAspectRatio > fNativeAspect) {
-                        if (iHUDObjectX == static_cast<short>(std::ceilf(1080.00f * fAspectRatio)) && iHUDObjectY == 1080)
-                            return;
-                    }
-                    else if (fAspectRatio < fNativeAspect) {
-                        if (iHUDObjectX == 1920 && iHUDObjectY == static_cast<short>(std::ceilf(1920.00f / fAspectRatio)))
-                            return;
-                    }
+                    iHUDObjectX = *reinterpret_cast<short*>(ctx.rax + 0xF0);
+                    iHUDObjectY = *reinterpret_cast<short*>(ctx.rax + 0xF2);
 
                     // Fix photo mode filters
                     if (iHUDObjectX == 1920 && iHUDObjectY == 1080) {
-                        if (strncmp(reinterpret_cast<const char*>(ctx.r13 + 0x20), "sample", 6) == 0) {
+                        if (std::strncmp(reinterpret_cast<const char*>(ctx.r13 + 0x20), "sample", 6) == 0) {
                             if (fAspectRatio > fNativeAspect) {
-                                *reinterpret_cast<short*>(pHUDObject + 0xF0) = static_cast<short>(std::ceilf(1080.00f * fAspectRatio));
-                                ctx.rax = (static_cast<uintptr_t>(iHUDObjectY) << 16) | static_cast<short>(ceilf(iHUDObjectX * fAspectMultiplier));
+                                *reinterpret_cast<short*>(ctx.rax + 0xF0) = static_cast<short>(std::ceilf(iHUDObjectX * fAspectMultiplier));
+                                *reinterpret_cast<short*>(ctx.rax + 0xF2) = iHUDObjectY;
                             }
                             else if (fAspectRatio < fNativeAspect) {
-                                *reinterpret_cast<short*>(pHUDObject + 0xF2) = static_cast<short>(std::ceilf(1920.00f / fAspectRatio));
-                                ctx.rax = (static_cast<uintptr_t>(static_cast<short>(ceilf(iHUDObjectX / fAspectRatio))) << 16) | iHUDObjectX;
+                                *reinterpret_cast<short*>(ctx.rax + 0xF0) = iHUDObjectX;
+                                *reinterpret_cast<short*>(ctx.rax + 0xF2) = static_cast<short>(std::ceilf(iHUDObjectY / fAspectMultiplier));
                             }
+
+                            // Write a marker to identify a modified HUD object
+                            *reinterpret_cast<int*>(ctx.rax + 0xC4) = 12345;
+
+                            // Exit hook before the backgrounds section can run
                             return;
                         }
                     }
 
                     // Backgrounds
                     if ( (iHUDObjectX > 1921 && iHUDObjectY > 1081) || (iHUDObjectX > 1999 && iHUDObjectY > 1079) || (iHUDObjectX == 4000 && iHUDObjectY == 1000) ) {
-                        if (fAspectRatio > fNativeAspect)
-                            ctx.rax = (static_cast<uintptr_t>(iHUDObjectY) << 16) | static_cast<short>(ceilf(iHUDObjectX * fAspectMultiplier));
-                        else if (fAspectRatio < fNativeAspect)
-                            ctx.rax = (static_cast<uintptr_t>(static_cast<short>(ceilf(iHUDObjectX / fAspectRatio))) << 16) | iHUDObjectX;
+                        if (fAspectRatio > fNativeAspect) {
+                            *reinterpret_cast<short*>(ctx.rax + 0xF0) = static_cast<short>(std::ceilf(iHUDObjectX * fAspectMultiplier));
+                            *reinterpret_cast<short*>(ctx.rax + 0xF2) = iHUDObjectY;
+                         
+                        }
+                        else if (fAspectRatio < fNativeAspect) {
+                            *reinterpret_cast<short*>(ctx.rax + 0xF0) = iHUDObjectX;
+                            *reinterpret_cast<short*>(ctx.rax + 0xF2) = static_cast<short>(std::ceilf(iHUDObjectY / fAspectMultiplier));
+                        }
+
+                        // Write a marker to identify a modified HUD object
+                        *reinterpret_cast<int*>(ctx.rax + 0xC4) = 12345;
                     }
                 });
         }
