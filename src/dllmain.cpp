@@ -390,7 +390,7 @@ void HUD()
                         }
                         else if (fAspectRatio < fNativeAspect) {
                             *reinterpret_cast<float*>(ctx.r9 + 0x4A0) = fHUDFOV / fNativeAspect;
-                            *reinterpret_cast<float*>(ctx.r9 + 0x4B4) = fHUDFOV / fAspectRatio;
+                            *reinterpret_cast<float*>(ctx.r9 + 0x4B4) = fHUDFOV * fAspectMultiplier;
 
                             *reinterpret_cast<int*>(ctx.r9 + 0x690) = 1920;
                             *reinterpret_cast<int*>(ctx.r9 + 0x694) = static_cast<int>(std::ceilf(1920.00f / fAspectRatio));
