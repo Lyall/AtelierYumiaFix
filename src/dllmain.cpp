@@ -49,6 +49,7 @@ bool bIntroSkip;
 // Variables
 int iCurrentResX;
 int iCurrentResY;
+std::uint8_t* pHUDObject = nullptr;
 int iHUDObjectX;
 int iHUDObjectY;
 const float fHUDFOV = (1.00f / std::tanf(0.7853981853f / 2.00f));
@@ -307,7 +308,7 @@ void IntroSkip()
             static SafetyHookMid AutosaveDialogMidHook{};
             AutosaveDialogMidHook = safetyhook::create_mid(AutosaveDialogScanResult,
                 [](SafetyHookContext& ctx) {
-                    // This one causes a glitch in the OOBE for the demo where the autosave dialog remains visual.
+                    // This one causes a glitch in the OOBE for the demo where the autosave dialog remains visible.
                     if (!bHasSkippedIntro) {
                         ctx.rax = (ctx.rax & ~0xFF) | 0x01;
                     }
@@ -440,56 +441,38 @@ void HUD()
         }
 
         // HUD Objects
-        std::uint8_t* HUDObjectsScanResult = Memory::PatternScan(exeModule, "89 ?? ?? 49 8B ?? ?? 48 8B ?? FF 90 ?? ?? ?? ?? 8B ?? 33 ?? 49 8B ?? ??");
+        std::uint8_t* HUDObjectsScanResult = Memory::PatternScan(exeModule, "0F ?? ?? 4C ?? ?? ?? 45 ?? ?? ?? 48 ?? ?? ?? ?? 49 ?? ?? 66 0F ?? ?? 0F ?? ?? ?? ?? 0F ?? ??");
         if (HUDObjectsScanResult) { 
             spdlog::info("HUD: Objects: Address is {:s}+{:x}", sExeName.c_str(), HUDObjectsScanResult - (std::uint8_t*)exeModule);
             static SafetyHookMid HUDObjectsMidHook{};
-            HUDObjectsMidHook = safetyhook::create_mid(HUDObjectsScanResult - 0x6,
+            HUDObjectsMidHook = safetyhook::create_mid(HUDObjectsScanResult + 0x30,
                 [](SafetyHookContext& ctx) {
-                    if (!ctx.rax)
+                    if (!ctx.r13)
                         return;
 
-                    // Skip already scaled objects
-                    if (*reinterpret_cast<int*>(ctx.rax + 0xC4) == 12345)
-                        return;
-
-                    iHUDObjectX = *reinterpret_cast<short*>(ctx.rax + 0xF0);
-                    iHUDObjectY = *reinterpret_cast<short*>(ctx.rax + 0xF2);
+                    pHUDObject = *reinterpret_cast<std::uint8_t**>(ctx.r13 + 0x08);
+                    iHUDObjectX = *reinterpret_cast<short*>(pHUDObject + 0xF0);
+                    iHUDObjectY = *reinterpret_cast<short*>(pHUDObject + 0xF2);
 
                     // Fix photo mode filters
-                    if (iHUDObjectX == 1920 && iHUDObjectY == 1080) {
-                        if (std::strncmp(reinterpret_cast<const char*>(ctx.r13 + 0x20), "sample", 6) == 0) {
-                            if (fAspectRatio > fNativeAspect) {
-                                *reinterpret_cast<short*>(ctx.rax + 0xF0) = static_cast<short>(std::ceilf(iHUDObjectX * fAspectMultiplier));
-                                *reinterpret_cast<short*>(ctx.rax + 0xF2) = iHUDObjectY;
-                            }
-                            else if (fAspectRatio < fNativeAspect) {
-                                *reinterpret_cast<short*>(ctx.rax + 0xF0) = iHUDObjectX;
-                                *reinterpret_cast<short*>(ctx.rax + 0xF2) = static_cast<short>(std::ceilf(iHUDObjectY / fAspectMultiplier));
-                            }
+                    if (iHUDObjectX == 1920 && iHUDObjectY == 1080 && pHUDObject + 0xB0) {
+                        if (std::strncmp(*reinterpret_cast<const char**>(pHUDObject + 0xB0), "sample", 6) == 0) {
+                            if (fAspectRatio > fNativeAspect)
+                                ctx.xmm0.f32[0] = std::ceilf(iHUDObjectX * fAspectMultiplier);
+                            else if (fAspectRatio < fNativeAspect)
+                                ctx.xmm1.f32[0] = std::ceilf(iHUDObjectY / fAspectMultiplier);
 
-                            // Write a marker to identify a modified HUD object
-                            *reinterpret_cast<int*>(ctx.rax + 0xC4) = 12345;
-
-                            // Exit hook before the backgrounds section can run
+                            // Exit before backgrounds section runs
                             return;
                         }
                     }
 
                     // Backgrounds
                     if ( (iHUDObjectX > 1921 && iHUDObjectY > 1081) || (iHUDObjectX > 1999 && iHUDObjectY > 1079) || (iHUDObjectX == 4000 && iHUDObjectY == 1000) ) {
-                        if (fAspectRatio > fNativeAspect) {
-                            *reinterpret_cast<short*>(ctx.rax + 0xF0) = static_cast<short>(std::ceilf(iHUDObjectX * fAspectMultiplier));
-                            *reinterpret_cast<short*>(ctx.rax + 0xF2) = iHUDObjectY;
-                         
-                        }
-                        else if (fAspectRatio < fNativeAspect) {
-                            *reinterpret_cast<short*>(ctx.rax + 0xF0) = iHUDObjectX;
-                            *reinterpret_cast<short*>(ctx.rax + 0xF2) = static_cast<short>(std::ceilf(iHUDObjectY / fAspectMultiplier));
-                        }
-
-                        // Write a marker to identify a modified HUD object
-                        *reinterpret_cast<int*>(ctx.rax + 0xC4) = 12345;
+                        if (fAspectRatio > fNativeAspect)
+                            ctx.xmm0.f32[0] = std::ceilf(iHUDObjectX * fAspectMultiplier);
+                        else if (fAspectRatio < fNativeAspect)
+                            ctx.xmm1.f32[0] = std::ceilf(iHUDObjectY / fAspectMultiplier);
                     }
                 });
         }
