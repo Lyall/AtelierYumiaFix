@@ -45,6 +45,8 @@ bool bFixHUD;
 float fGameplayFOVMulti;
 float fBattleFOVMulti;
 bool bIntroSkip;
+bool bDisablePhotoModeRestrict;
+float fAnimationDistance;
 
 // Variables
 int iCurrentResX;
@@ -168,10 +170,13 @@ void Configuration()
     inipp::get_value(ini.sections["FOV"], "Gameplay", fGameplayFOVMulti);
     inipp::get_value(ini.sections["FOV"], "Battle", fBattleFOVMulti);
     inipp::get_value(ini.sections["Intro Skip"], "Enabled", bIntroSkip);
+    inipp::get_value(ini.sections["Disable Photo Mode Restriction"], "Enabled", bDisablePhotoModeRestrict);
+    inipp::get_value(ini.sections["LOD Tweaks"], "Animation Distance", fAnimationDistance);
 
     // Clamp settings
     fGameplayFOVMulti = std::clamp(fGameplayFOVMulti, 0.10f, 2.00f);
     fBattleFOVMulti = std::clamp(fBattleFOVMulti, 0.10f, 2.00f);
+    fAnimationDistance = std::clamp(fAnimationDistance, 0.10f, 10.00f);
 
     // Log ini parse
     spdlog_confparse(bCustomRes);
@@ -181,6 +186,8 @@ void Configuration()
     spdlog_confparse(fGameplayFOVMulti);
     spdlog_confparse(fBattleFOVMulti);
     spdlog_confparse(bIntroSkip);
+    spdlog_confparse(bDisablePhotoModeRestrict);
+    spdlog_confparse(fAnimationDistance);
 
     spdlog::info("----------");
 }
@@ -493,6 +500,42 @@ void HUD()
     }
 }
 
+void Graphics()
+{
+    if (bDisablePhotoModeRestrict) 
+    {
+        // Disable photo mode restriction
+        std::uint8_t* PhotoModeRestrictionScanResult = Memory::PatternScan(exeModule, "0F ?? ?? 48 8B ?? ?? ?? ?? ?? ?? 88 ?? ?? ?? ?? ?? EB ?? C6 ?? ?? ?? ?? ?? 00");
+        if (PhotoModeRestrictionScanResult) { 
+            spdlog::info("Graphics: Photo Mode Restriction: Address is {:s}+{:x}", sExeName.c_str(), PhotoModeRestrictionScanResult - (std::uint8_t*)exeModule);
+            Memory::PatchBytes(PhotoModeRestrictionScanResult, "\xB0\x00\x90", 3); // cmova eax,esi -> mov al, 0 to never hide the character model
+            spdlog::info("Graphics: Photo Mode Restriction: Patched instruction."); 
+        }
+        else {
+            spdlog::error("Graphics: Photo Mode Restriction: Pattern scan failed.");
+        }
+    }
+   
+    if (fAnimationDistance != 1.00f)
+    {
+        // Animation distance
+        std::uint8_t* AnimationDistanceScanResult = Memory::PatternScan(exeModule, "48 89 ?? ?? ?? ?? ?? ?? 8B ?? ?? ?? ?? ?? 48 89 ?? ?? ?? 48 8D ?? ?? ?? ?? ?? ?? 89 ?? ?? ?? ?? ?? ?? 48 8D ?? ?? ?? ?? ?? 48 89 ?? ?? ??");
+        if (AnimationDistanceScanResult) { 
+            spdlog::info("Graphics: Animation Distance: Address is {:s}+{:x}", sExeName.c_str(), AnimationDistanceScanResult - (std::uint8_t*)exeModule);
+            static SafetyHookMid AnimationDistanceMidHook{};
+            AnimationDistanceMidHook = safetyhook::create_mid(AnimationDistanceScanResult,
+                [](SafetyHookContext& ctx) {
+                    // Only change the "Long" setting. Close = 0.8, Standard = 0.9, Long = 1.0
+                    if (ctx.xmm0.f32[0] == 1.00f)
+                        ctx.xmm0.f32[0] = 3.00f;
+                });
+        }
+        else {
+            spdlog::error("Graphics: Animation Distance: Pattern scan failed.");
+        }
+    }
+}
+
 DWORD __stdcall Main(void*)
 {
     Logging();
@@ -502,6 +545,7 @@ DWORD __stdcall Main(void*)
     IntroSkip();
     FOV();
     HUD();
+    Graphics();
 
     return true;
 }
