@@ -526,7 +526,7 @@ void Graphics()
             AnimationDistanceMidHook = safetyhook::create_mid(AnimationDistanceScanResult,
                 [](SafetyHookContext& ctx) {
                     // Only change the "Long" setting. Close = 0.8, Standard = 0.9, Long = 1.0
-                    if (ctx.xmm0.f32[0] == 1.00f)
+                    if (ctx.rcx == 0)
                         ctx.xmm0.f32[0] = 3.00f;
                 });
         }
